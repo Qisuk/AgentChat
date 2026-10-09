@@ -1,0 +1,43 @@
+# Local models for AgentChat.
+#
+#   docker compose up -d              # start Ollama
+#   ./scripts/pull-models.ps1         # download the default agents' models
+#
+# The app talks to Ollama through its OpenAI-compatible API at http://localhost:11435/v1
+# (the "ollama" entry under "Providers" in src/AgentChat/appsettings.json).
+# Port 11435 avoids clashing with a native Ollama install or another container on 11434;
+# change it with  $env:OLLAMA_PORT=11500; docker compose up -d  and update the provider's BaseUrl.
+#
+# One Ollama container serves all the models. To isolate models (e.g. one per GPU), copy the
+# service with another name and port and add a matching provider in appsettings.json.
+
+services:
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    container_name: agentchat-ollama
+    ports:
+      - "${OLLAMA_PORT:-11435}:11434"
+    volumes:
+      # Downloaded models survive container re-creation.
+      - ollama-models:/root/.ollama
+    environment:
+      # Agents take turns, so keep every agent's model loaded between turns.
+      - OLLAMA_KEEP_ALIVE=30m
+      - OLLAMA_MAX_LOADED_MODELS=3
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # CPU-only by default. With an NVIDIA GPU (and the NVIDIA container toolkit), uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama-models:

@@ -1,0 +1,161 @@
+@page "/"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject ChatRoom Room
+@inject IJSRuntime JS
+
+<PageTitle>Agent Chat</PageTitle>
+
+<div class="shell">
+    <section class="chat">
+        <header class="chat-header">
+            <h1>Agent Chat</h1>
+            <span class="status status-@Room.Status.ToString().ToLowerInvariant()">@StatusText</span>
+
+            <div class="throttle" title="How many agent loops (read → decide → comment → act → report) may run before the agents wait for you.">
+                <label for="throttle">Throttle</label>
+                <input id="throttle" type="range" min="1" max="20" value="@Math.Min(Room.Throttle, 20)"
+                       @onchange="e => Room.SetThrottle(int.Parse((string)e.Value!))" />
+                <input class="throttle-number" type="number" min="1" max="@ChatRoom.MaxThrottle" value="@Room.Throttle"
+                       @onchange="e => { if (int.TryParse((string?)e.Value, out var n)) Room.SetThrottle(n); }" />
+                <span class="muted">loops · used @Room.LoopsUsed</span>
+            </div>
+
+            <div class="actions">
+                <button class="btn" disabled="@(Room.Status == RoomStatus.Running)" @onclick="Room.Continue" title="Let the agents run another batch of loops without a new message">Continue</button>
+                <button class="btn" disabled="@(Room.Status != RoomStatus.Running)" @onclick="Room.Stop">Stop</button>
+                <button class="btn btn-ghost" @onclick="Room.Clear">Clear</button>
+            </div>
+        </header>
+
+        <div class="messages" @ref="_messagesElement">
+            @if (_messages.Count == 0)
+            {
+                <div class="empty">
+                    Say something to start the conversation. Agents take turns, can talk to each other, and stop after
+                    the throttle's number of loops so you can steer them. Use <code>@@Name</code> to address an agent directly.
+                </div>
+            }
+            @foreach (var message in _messages)
+            {
+                var color = message.AgentId is null ? null : _agents.FirstOrDefault(a => a.Id == message.AgentId)?.Color;
+                <div class="msg msg-@message.Kind.ToString().ToLowerInvariant()" style="@(color is null ? null : $"--agent-color:{color}")">
+                    <div class="msg-meta">
+                        <span class="msg-author">@message.Author</span>
+                        @if (message.Loop > 0)
+                        {
+                            <span class="muted">loop @message.Loop</span>
+                        }
+                        <span class="muted">@message.Timestamp.ToString("HH:mm:ss")</span>
+                    </div>
+                    <div class="msg-body">@message.Content</div>
+                </div>
+            }
+
+            @if (ActiveAgent is { } active)
+            {
+                <div class="working" style="--agent-color:@active.Color">
+                    <span class="msg-author">@active.Name</span>
+                    <span class="muted">@active.Model</span>
+                    <ol class="phases">
+                        @foreach (var phase in Enum.GetValues<LoopPhase>())
+                        {
+                            <li class="@(phase == Room.ActivePhase ? "on" : (Room.ActivePhase is { } p && phase < p ? "done" : ""))">@phase.ToString().ToLowerInvariant()</li>
+                        }
+                    </ol>
+                    <span class="dots"><i></i><i></i><i></i></span>
+                </div>
+            }
+        </div>
+
+        <form class="composer" @onsubmit="Send">
+            <input @bind="_draft" @bind:event="oninput" placeholder="Message the agents… (@@Name to address one)" autocomplete="off" />
+            <button class="btn btn-primary" type="submit">Send</button>
+        </form>
+    </section>
+
+    <aside class="agents">
+        <div class="agents-header">
+            <h2>Agents</h2>
+            <button class="btn" @onclick="AddAgent">+ Add agent</button>
+        </div>
+        @foreach (var agent in _agents)
+        {
+            <AgentEditor @key="agent.Id" Agent="agent" IsActive="@(agent.Id == Room.ActiveAgentId)" OnChanged="Refresh" />
+        }
+    </aside>
+</div>
+
+@code {
+    private ElementReference _messagesElement;
+    private IReadOnlyList<ChatMessage> _messages = [];
+    private IReadOnlyList<AgentConfig> _agents = [];
+    private string _draft = "";
+    private bool _forceScroll;
+
+    private AgentConfig? ActiveAgent => _agents.FirstOrDefault(a => a.Id == Room.ActiveAgentId);
+
+    private string StatusText => Room.Status switch
+    {
+        RoomStatus.Running => "Agents running",
+        RoomStatus.WaitingForUser => "Waiting for you",
+        _ => "Idle",
+    };
+
+    protected override void OnInitialized()
+    {
+        Refresh();
+        Room.Changed += OnRoomChanged;
+    }
+
+    private void Refresh()
+    {
+        _messages = Room.Messages;
+        _agents = Room.Agents.Agents;
+    }
+
+    private void OnRoomChanged() => InvokeAsync(() =>
+    {
+        Refresh();
+        StateHasChanged();
+    });
+
+    private void Send()
+    {
+        if (string.IsNullOrWhiteSpace(_draft))
+        {
+            return;
+        }
+        Room.PostUserMessage(_draft);
+        _draft = "";
+        _forceScroll = true;
+    }
+
+    private void AddAgent()
+    {
+        var number = _agents.Count + 1;
+        Room.Agents.Upsert(new AgentConfig { Name = $"Agent{number}", Color = Palette[number % Palette.Length] });
+        Refresh();
+    }
+
+    private static readonly string[] Palette = ["#3b82f6", "#f97316", "#10b981", "#a855f7", "#ef4444", "#eab308", "#06b6d4", "#ec4899"];
+
+    // After every render: the script only scrolls if the user was already at the bottom (or just sent a
+    // message). Skipping "unchanged" renders isn't safe: with fast agents, _messages can already hold
+    // messages the browser hasn't drawn yet, so the render that finally draws them would look unchanged.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var force = firstRender || _forceScroll;
+        _forceScroll = false;
+        try
+        {
+            await JS.InvokeVoidAsync("agentChat.scrollToEnd", _messagesElement, force);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser tab closed mid-render; nothing to scroll.
+        }
+    }
+
+    public void Dispose() => Room.Changed -= OnRoomChanged;
+}

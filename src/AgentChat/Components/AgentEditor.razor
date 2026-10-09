@@ -1,0 +1,239 @@
+@using System.Text.Json
+@implements IDisposable
+@inject ChatRoom Room
+@inject LlmProviderRegistry Providers
+@inject ToolRegistry ToolRegistry
+
+<div class="agent-card @(IsActive ? "active" : "") @(_edit.Enabled ? "" : "disabled") @(Room.Session.IsMuted(_edit.Id) ? "muted" : "")" style="--agent-color:@_edit.Color">
+    <div class="agent-summary" @onclick="() => _expanded = !_expanded">
+        <span class="swatch"></span>
+        <div class="agent-title">
+            <strong>@_edit.Name</strong>
+            <span class="muted">@_edit.ProviderId / @_edit.Model</span>
+            @if (Room.Session.Sacks.Peek(_edit.Id) is { } sack)
+            {
+                <span class="sack" title="Items in this agent's sack (this chat session)">sack: @(sack.Count == 0 ? "empty" : string.Join(", ", sack))</span>
+            }
+        </div>
+        @if (IsDirty)
+        {
+            <span class="badge">unsaved</span>
+        }
+        @if (Room.Session.MutedBy(_edit.Id) is { } mutedBy)
+        {
+            <span class="badge badge-muted" title="Muted by @mutedBy for this chat session">muted</span>
+            <button class="btn btn-small" @onclick="() => Room.Unmute(_edit.Id)" @onclick:stopPropagation="true">Unmute</button>
+        }
+        else
+        {
+            <button class="btn btn-small" @onclick="() => Room.Mute(_edit.Id)" @onclick:stopPropagation="true" title="Silence this agent until you unmute it or clear the chat">Mute</button>
+        }
+        <label class="switch" @onclick:stopPropagation="true" title="Enabled agents take turns in the chat">
+            <input type="checkbox" checked="@_edit.Enabled" @onchange="ToggleEnabled" />
+            <span>@(_edit.Enabled ? "on" : "off")</span>
+        </label>
+        <span class="chevron">@(_expanded ? "▾" : "▸")</span>
+    </div>
+
+    @if (_expanded)
+    {
+        <div class="agent-form">
+            <div class="row">
+                <label>Name <input @bind="_edit.Name" @bind:event="oninput" /></label>
+                <label class="narrow">Colour <input type="color" @bind="_edit.Color" @bind:event="oninput" /></label>
+            </div>
+
+            <div class="row">
+                <label>
+                    Provider
+                    <select @bind="_edit.ProviderId" @bind:after="LoadModels">
+                        @foreach (var provider in Providers.All)
+                        {
+                            <option value="@provider.Id">@provider.DisplayName</option>
+                        }
+                    </select>
+                </label>
+                <label>
+                    Model
+                    <input list="models-@_edit.Id" @bind="_edit.Model" @bind:event="oninput" />
+                    <datalist id="models-@_edit.Id">
+                        @foreach (var model in _models)
+                        {
+                            <option value="@model"></option>
+                        }
+                    </datalist>
+                </label>
+            </div>
+            @if (_modelError is not null)
+            {
+                <div class="hint error">Couldn't list models: @_modelError</div>
+            }
+
+            <label>
+                System prompt
+                <textarea rows="5" @bind="_edit.SystemPrompt" @bind:event="oninput"></textarea>
+            </label>
+
+            <label>
+                Memory <span class="muted">(long-term notes always in context)</span>
+                <textarea rows="3" @bind="_edit.Memory" @bind:event="oninput" placeholder="Facts, preferences or goals this agent should always remember"></textarea>
+            </label>
+
+            <div class="row">
+                <label title="Most recent chat messages the agent reads each loop">
+                    Context messages
+                    <input type="number" min="0" max="500" @bind="_edit.ContextMessages" />
+                </label>
+                <label title="Approximate token budget for the whole prompt; oldest messages are dropped to fit">
+                    Context tokens
+                    <input type="number" min="256" step="256" @bind="_edit.ContextTokens" />
+                </label>
+            </div>
+            <div class="row">
+                <label>
+                    Max reply tokens
+                    <input type="number" min="16" step="16" @bind="_edit.MaxResponseTokens" />
+                </label>
+                <label>
+                    Temperature <span class="muted">@_edit.Temperature.ToString("0.0")</span>
+                    <input type="range" min="0" max="2" step="0.1" @bind="_edit.Temperature" @bind:event="oninput" />
+                </label>
+            </div>
+
+            <fieldset>
+                <legend>Tools</legend>
+                @if (ToolRegistry.All.Count == 0)
+                {
+                    <div class="hint">No tools available yet. Add MCP servers under "McpServers" in appsettings.json.</div>
+                }
+                @foreach (var tool in ToolRegistry.All.OrderBy(t => t.Source).ThenBy(t => t.Name))
+                {
+                    <label class="check" title="@tool.Description">
+                        <input type="checkbox" checked="@_edit.Tools.Contains(tool.Name)" @onchange="e => ToggleTool(tool.Name, (bool)e.Value!)" />
+                        <code>@tool.Name</code> <span class="muted">@tool.Source</span>
+                    </label>
+                }
+                @foreach (var (source, error) in ToolRegistry.SourceErrors)
+                {
+                    <div class="hint error">@source: @error</div>
+                }
+                @if (_edit.Tools.Count > 0)
+                {
+                    <label class="inline">
+                        Max tool calls per loop
+                        <input type="number" min="1" max="20" @bind="_edit.MaxToolCallsPerLoop" />
+                    </label>
+                }
+            </fieldset>
+
+            <div class="form-actions">
+                <button class="btn btn-primary" disabled="@(!IsDirty)" @onclick="Save">Save</button>
+                <button class="btn" disabled="@(!IsDirty)" @onclick="Revert">Revert</button>
+                <button class="btn btn-danger" @onclick="Delete">@(_confirmDelete ? "Click again to delete" : "Delete")</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AgentConfig Agent { get; set; } = default!;
+    [Parameter] public bool IsActive { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private AgentConfig _edit = new();
+    private string _saved = "";
+    private bool _expanded;
+    private bool _confirmDelete;
+    private IReadOnlyList<string> _models = [];
+    private string? _modelError;
+    private string? _modelsLoadedFor;
+
+    private bool IsDirty => JsonSerializer.Serialize(_edit) != _saved;
+
+    protected override void OnInitialized() => ToolRegistry.Changed += OnToolsChanged;
+
+    protected override void OnParametersSet()
+    {
+        // The parent re-renders on every chat update; keep unsaved edits instead of resetting them.
+        if (_edit.Id != Agent.Id || !IsDirty)
+        {
+            _edit = Agent.Clone();
+            _saved = JsonSerializer.Serialize(_edit);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_expanded && _modelsLoadedFor != _edit.ProviderId)
+        {
+            await LoadModels();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadModels()
+    {
+        _modelsLoadedFor = _edit.ProviderId;
+        try
+        {
+            _models = await Providers.Get(_edit.ProviderId).ListModelsAsync();
+            _modelError = null;
+        }
+        catch (Exception ex)
+        {
+            _models = [];
+            _modelError = ex.Message;
+        }
+    }
+
+    private void ToggleTool(string name, bool on)
+    {
+        _edit.Tools.Remove(name);
+        if (on)
+        {
+            _edit.Tools.Add(name);
+        }
+    }
+
+    // Enabling/disabling takes effect immediately, without touching other unsaved edits.
+    private async Task ToggleEnabled(ChangeEventArgs e)
+    {
+        var enabled = (bool)e.Value!;
+        _edit.Enabled = enabled;
+        var stored = Room.Agents.Find(_edit.Id) ?? Agent.Clone();
+        stored.Enabled = enabled;
+        Room.Agents.Upsert(stored);
+        var saved = JsonSerializer.Deserialize<AgentConfig>(_saved)!;
+        saved.Enabled = enabled;
+        _saved = JsonSerializer.Serialize(saved);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task Save()
+    {
+        _edit.Name = string.IsNullOrWhiteSpace(_edit.Name) ? "Agent" : _edit.Name.Trim();
+        Room.Agents.Upsert(_edit);
+        _saved = JsonSerializer.Serialize(_edit);
+        await OnChanged.InvokeAsync();
+    }
+
+    private void Revert()
+    {
+        _edit = JsonSerializer.Deserialize<AgentConfig>(_saved)!;
+    }
+
+    private async Task Delete()
+    {
+        if (!_confirmDelete)
+        {
+            _confirmDelete = true;
+            return;
+        }
+        Room.Agents.Remove(_edit.Id);
+        await OnChanged.InvokeAsync();
+    }
+
+    private void OnToolsChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => ToolRegistry.Changed -= OnToolsChanged;
+}

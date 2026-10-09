@@ -1,0 +1,41 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <ResourcePreloader />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["AgentChat.styles.css"]" />
+    <ImportMap />
+    <HeadOutlet />
+</head>
+
+<body>
+    <Routes />
+    <ReconnectModal />
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script>
+        // Keep the newest chat message in view unless the user has scrolled up to read older ones.
+        // "At the bottom" is remembered from the user's last scroll, so a burst of new messages
+        // (fast agents) doesn't leave the view behind.
+        window.agentChat = {
+            scrollToEnd: (el, force) => {
+                if (!el) return;
+                if (!el._agentChatWatch) {
+                    el._agentChatWatch = true;
+                    el._stick = true;
+                    el.addEventListener('scroll', () => {
+                        el._stick = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+                    }, { passive: true });
+                }
+                if (force || el._stick) {
+                    el.scrollTop = el.scrollHeight;
+                }
+            }
+        };
+    </script>
+</body>
+
+</html>
