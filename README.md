@@ -80,10 +80,15 @@ Tools implement `ITool` and come from `IToolSource`s (`src/AgentChat/Tools`):
   restarting the app removes them, and you can unmute from the agent's card.
   `sack` gives every agent a sack that starts with 3 different random items from
   `sword, axe, shield, wand, hat, shoes`, filled the first time it is used. `look` lists your items;
-  `give` moves one to another agent (muted and disabled agents can still receive). The agent puts its
-  name in the call, but the tool checks it against the real caller, which the room sets, not the model.
-  A call naming anyone else is refused, so no agent can touch another agent's sack. Sacks are shown on
-  the agent cards and emptied when the chat is cleared.
+  `give` moves one to another agent or to `User` (muted and disabled agents can still receive). A sack
+  that hasn't been used yet is filled with its 3 items before the gift is added. You have a sack too:
+  the "Your sack" panel in the sidebar shows it and lets you give items to agents. Your gifts appear in
+  the chat, so agents see them. A call looks like
+  `{"action": "give", "my_name": "Ada", "item": "sword", "give_to": "Quinn"}`. The agent puts its own
+  name in `my_name`, but the tool checks it against the real caller, which the room sets, not the model.
+  A call naming anyone else is refused, so no agent can touch another agent's sack. Every refusal
+  includes a corrected call built from the agent's real name and items, which helps small models
+  recover. Sacks are shown on the agent cards and emptied when the chat is cleared.
 - `McpToolSource`: connects to an MCP server (stdio or HTTP) with the official
   `ModelContextProtocol` SDK and exposes each server tool as `<server>__<tool>`.
 

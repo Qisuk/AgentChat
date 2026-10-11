@@ -1,0 +1,90 @@
+@implements IDisposable
+@inject ChatRoom Room
+
+@* The user's own sack: what's in it, and a way to give items to agents. *@
+<div class="user-sack">
+    <h2>Your sack</h2>
+    <div class="sack-items">
+        @if (_items.Count == 0)
+        {
+            <span class="muted">Empty</span>
+        }
+        @foreach (var item in _items)
+        {
+            <span class="chip">@item</span>
+        }
+    </div>
+
+    @if (_items.Count > 0 && _agents.Count > 0)
+    {
+        <div class="give-row">
+            <select @bind="_item" aria-label="Item to give">
+                @foreach (var item in _items.Distinct())
+                {
+                    <option value="@item">@item</option>
+                }
+            </select>
+            <span class="muted">to</span>
+            <select @bind="_to" aria-label="Agent to give to">
+                @foreach (var agent in _agents)
+                {
+                    <option value="@agent.Id">@agent.Name</option>
+                }
+            </select>
+            <button class="btn btn-small" @onclick="Give">Give</button>
+        </div>
+    }
+    @if (_message is not null)
+    {
+        <div class="hint @(_failed ? "error" : "")">@_message</div>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<string> _items = [];
+    private IReadOnlyList<AgentConfig> _agents = [];
+    private string _item = "";
+    private string _to = "";
+    private string? _message;
+    private bool _failed;
+
+    protected override void OnInitialized()
+    {
+        Refresh();
+        Room.Changed += OnChanged;
+    }
+
+    // Opening fills the sack the first time (and again after the chat is cleared).
+    private void Refresh()
+    {
+        _items = Room.Session.Sacks.Open(SackStore.UserSackId);
+        _agents = Room.Agents.Agents;
+        if (!_items.Contains(_item))
+        {
+            _item = _items.FirstOrDefault() ?? "";
+        }
+        if (_agents.All(a => a.Id != _to))
+        {
+            _to = _agents.FirstOrDefault()?.Id ?? "";
+        }
+    }
+
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        Refresh();
+        StateHasChanged();
+    });
+
+    private void Give()
+    {
+        // Read the choice first: the give raises Changed, which refreshes (and may reset) the selection.
+        var item = _item;
+        var recipient = _agents.FirstOrDefault(a => a.Id == _to)?.Name;
+        var error = Room.GiveFromUser(item, _to);
+        _failed = error is not null;
+        _message = error ?? $"You gave the {item} to {recipient}.";
+        Refresh();
+    }
+
+    public void Dispose() => Room.Changed -= OnChanged;
+}

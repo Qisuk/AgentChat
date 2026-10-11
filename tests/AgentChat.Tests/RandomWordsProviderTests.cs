@@ -127,10 +127,10 @@ public class RandomWordsProviderTests
         {
             Assert.Contains(c.Arguments["action"]!.GetValue<string>(), new[] { "look", "give" });
             Assert.Contains(c.Arguments["item"]!.GetValue<string>(), AgentChat.Chat.SackStore.Items);
-            Assert.Contains(c.Arguments["to"]!.GetValue<string>(), new[] { "User", "Ada", "Quinn" });
+            Assert.Contains(c.Arguments["give_to"]!.GetValue<string>(), new[] { "User", "Ada", "Quinn" });
         });
         // Its own name comes from the "Rando (you)" label; sometimes it claims someone else's, which the tool refuses.
-        var own = calls.Count(c => c.Arguments["agent"]!.GetValue<string>() == "Rando");
+        var own = calls.Count(c => c.Arguments["my_name"]!.GetValue<string>() == "Rando");
         Assert.InRange(own, calls.Count / 2, calls.Count - 1);
     }
 

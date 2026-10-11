@@ -11,6 +11,9 @@ public sealed class SackStore(Random? random = null)
     public static readonly IReadOnlyList<string> Items = ["sword", "axe", "shield", "wand", "hat", "shoes"];
     public const int StartingItems = 3;
 
+    /// <summary>The human user's sack. Not a valid agent id, so it can't clash with an agent's sack.</summary>
+    public const string UserSackId = "@user";
+
     private readonly Random _random = random ?? Random.Shared;
     private readonly object _gate = new();
     private readonly Dictionary<string, List<string>> _sacks = new();

@@ -85,11 +85,13 @@ public sealed partial class RandomWordsProvider(ProviderOptions options) : ILlmP
     /// <summary>Chance of using its own name in a field that asks for "your own name" (else someone else's).</summary>
     public const double OwnNameChance = 0.7;
 
-    // "agent"/"name" anywhere in the field name; short words like "to" only as the whole name ("topic" isn't one).
+    // "agent"/"name" anywhere in the field name; "to" only as the whole name or a "_to" suffix
+    // ("give_to" is one, "topic" isn't).
     private static bool IsParticipantField(string field) =>
         field.Contains("agent", StringComparison.OrdinalIgnoreCase)
         || field.Contains("name", StringComparison.OrdinalIgnoreCase)
-        || field is "to" or "recipient" or "target";
+        || field is "to" or "recipient" or "target"
+        || field.EndsWith("_to", StringComparison.OrdinalIgnoreCase);
 
     private static JsonObject RandomArguments(LlmToolDefinition tool, List<string> words, List<string> names, string? self, Random random)
     {

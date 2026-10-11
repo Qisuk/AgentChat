@@ -332,7 +332,7 @@ public sealed class ChatRoomTests : IDisposable
     {
         string? item = null;
         var room = CreateRoom(ToolCallingProvider(
-            () => new LlmToolCall("1", "sack", new JsonObject { ["action"] = "give", ["agent"] = "A", ["item"] = item, ["to"] = "B" }),
+            () => new LlmToolCall("1", "sack", new JsonObject { ["action"] = "give", ["my_name"] = "A", ["item"] = item, ["give_to"] = "B" }),
             afterTool: "Gave it."), "A", "B");
         item = room.Session.Sacks.Open("a")[0];
         GiveTools(room, "A", "sack");
@@ -351,7 +351,7 @@ public sealed class ChatRoomTests : IDisposable
     {
         IReadOnlyList<string> bobs = [];
         var room = CreateRoom(ToolCallingProvider(
-            () => new LlmToolCall("1", "sack", new JsonObject { ["action"] = "give", ["agent"] = "B", ["item"] = bobs[0], ["to"] = "A" })), "A", "B");
+            () => new LlmToolCall("1", "sack", new JsonObject { ["action"] = "give", ["my_name"] = "B", ["item"] = bobs[0], ["give_to"] = "A" })), "A", "B");
         bobs = room.Session.Sacks.Open("b");
         GiveTools(room, "A", "sack");
         room.SetThrottle(1);
@@ -361,6 +361,50 @@ public sealed class ChatRoomTests : IDisposable
 
         Assert.Equal(bobs, room.Session.Sacks.Peek("b"));
         Assert.Contains(room.Messages, m => m.Kind == AuthorKind.Tool && m.Content.Contains("You are A, not B"));
+    }
+
+    [Fact]
+    public void The_user_can_give_an_item_to_an_agent()
+    {
+        var room = CreateRoom(new FakeProvider(_ => "ok"), "A");
+        var item = room.Session.Sacks.Open(SackStore.UserSackId)[0];
+
+        var error = room.GiveFromUser(item, "a");
+
+        Assert.Null(error);
+        Assert.DoesNotContain(item, room.Session.Sacks.Peek(SackStore.UserSackId)!);
+        Assert.Equal(item, room.Session.Sacks.Peek("a")![^1]);
+        var posted = room.Messages.Single();
+        Assert.Equal(AuthorKind.Tool, posted.Kind);
+        Assert.Equal($"User gave the {item} to A.", posted.Content);
+    }
+
+    [Fact]
+    public void The_user_cannot_give_an_item_they_do_not_have()
+    {
+        var room = CreateRoom(new FakeProvider(_ => "ok"), "A");
+        var missing = SackStore.Items.Except(room.Session.Sacks.Open(SackStore.UserSackId)).First();
+
+        var error = room.GiveFromUser(missing, "a");
+
+        Assert.Equal($"There is no {missing} in your sack.", error);
+        Assert.Empty(room.Messages);
+        Assert.Null(room.Session.Sacks.Peek("a"));
+    }
+
+    [Fact]
+    public async Task Agents_see_the_users_gift_attributed_to_the_user()
+    {
+        var provider = new FakeProvider(_ => "thanks");
+        var room = CreateRoom(provider, "A");
+        var item = room.Session.Sacks.Open(SackStore.UserSackId)[0];
+        room.GiveFromUser(item, "a");
+        room.SetThrottle(1);
+
+        room.PostUserMessage("enjoy");
+        await room.WaitForIdleAsync();
+
+        Assert.Contains($"[tool sack, called by User]: User gave the {item} to A.", provider.Requests[0].Messages[1].Content);
     }
 
     [Fact]

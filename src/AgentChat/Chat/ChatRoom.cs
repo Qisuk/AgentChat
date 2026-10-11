@@ -63,6 +63,29 @@ public sealed partial class ChatRoom
         }
     }
 
+    /// <summary>
+    /// The user gives one of their items to an agent. Posted to the chat as a sack message, so agents see it.
+    /// </summary>
+    /// <returns>Null if done, otherwise why not.</returns>
+    public string? GiveFromUser(string item, string toAgentId)
+    {
+        if (agents.Find(toAgentId) is not { } agent)
+        {
+            return "That agent no longer exists.";
+        }
+        if (!session.Sacks.Transfer(SackStore.UserSackId, toAgentId, item))
+        {
+            return $"There is no {item} in your sack.";
+        }
+        Append(new ChatMessage
+        {
+            Kind = AuthorKind.Tool,
+            Author = "sack",
+            Content = $"{PromptBuilder.HumanName} gave the {item} to {agent.Name}.",
+        });
+        return null;
+    }
+
     public void Unmute(string agentId)
     {
         session.Unmute(agentId);
